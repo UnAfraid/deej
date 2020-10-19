@@ -139,12 +139,15 @@ func (m *sessionMap) setupOnConfigReload() {
 
 func (m *sessionMap) setupOnSliderMove() {
 	sliderEventsChannel := m.deej.serial.SubscribeToSliderMoveEvents()
+	toggleMuteStateChannel := m.deej.serial.SubscribeToToggleMuteStateEvents()
 
 	go func() {
 		for {
 			select {
-			case event := <-sliderEventsChannel:
-				m.handleSliderMoveEvent(event)
+			case sliderMoveEvent := <-sliderEventsChannel:
+				m.handleSliderMoveEvent(sliderMoveEvent)
+			case toggleMuteStateEvent := <-toggleMuteStateChannel:
+				m.handleToggleMuteStateEvent(toggleMuteStateEvent)
 			}
 		}
 	}()
@@ -253,6 +256,69 @@ func (m *sessionMap) handleSliderMoveEvent(event SliderMoveEvent) {
 						m.logger.Warnw("Failed to set target session volume", "error", err)
 						adjustmentFailed = true
 					}
+				}
+			}
+		}
+	}
+
+	// if we still haven't found a target or the volume adjustment failed, maybe look for the target again.
+	// processes could've opened since the last time this slider moved.
+	// if they haven't, the cooldown will take care to not spam it up
+	if !targetFound {
+		m.refreshSessions(false)
+	} else if adjustmentFailed {
+
+		// performance: the reason that forcing a refresh here is okay is that we'll only get here
+		// when a session's SetVolume call errored, such as in the case of a stale master session
+		// (or another, more catastrophic failure happens)
+		m.refreshSessions(true)
+	}
+}
+
+func (m *sessionMap) handleToggleMuteStateEvent(event ToggleMuteStateEvent) {
+
+	// first of all, ensure our session map isn't moldy
+	if m.lastSessionRefresh.Add(maxTimeBetweenSessionRefreshes).Before(time.Now()) {
+		m.logger.Debug("Stale session map detected on slider move, refreshing")
+		m.refreshSessions(true)
+	}
+
+	// get the targets mapped to this slider from the config
+	targets, ok := m.deej.config.SliderMapping.get(event.ButtonId)
+
+	// if slider not found in config, silently ignore
+	if !ok {
+		return
+	}
+
+	targetFound := false
+	adjustmentFailed := false
+
+	// for each possible target for this slider...
+	for _, target := range targets {
+
+		// resolve the target name by cleaning it up and applying any special transformations.
+		// depending on the transformation applied, this can result in more than one target name
+		resolvedTargets := m.resolveTarget(target)
+
+		// for each resolved target...
+		for _, resolvedTarget := range resolvedTargets {
+
+			// check the map for matching sessions
+			sessions, ok := m.get(resolvedTarget)
+
+			// no sessions matching this target - move on
+			if !ok {
+				continue
+			}
+
+			targetFound = true
+
+			// iterate all matching sessions and adjust the volume of each one
+			for _, session := range sessions {
+				if err := session.SetMute(!session.GetMute()); err != nil {
+					m.logger.Warnw("Failed to set target session mute", "error", err)
+					adjustmentFailed = true
 				}
 			}
 		}

@@ -2,11 +2,10 @@ package deej
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -30,9 +29,12 @@ type SerialIO struct {
 	conn        io.ReadWriteCloser
 
 	lastKnownNumSliders        int
-	currentSliderPercentValues []float32
+	lastKnownNumButtons        int
+	currentSliderPercentValues map[int]float32
+	currentButtonValues        map[int]bool
 
-	sliderMoveConsumers []chan SliderMoveEvent
+	sliderMoveConsumers           []chan SliderMoveEvent
+	toggleMuteStateEventConsumers []chan ToggleMuteStateEvent
 }
 
 // SliderMoveEvent represents a single slider move captured by deej
@@ -41,7 +43,17 @@ type SliderMoveEvent struct {
 	PercentValue float32
 }
 
-var expectedLinePattern = regexp.MustCompile(`^\d{1,4}(\|\d{1,4})*\r\n$`)
+// ToggleMuteStateEvent represents single slider mute captured by deej
+type ToggleMuteStateEvent struct {
+	ButtonId int
+	State    bool
+}
+
+type SensorData struct {
+	Type  string  `json:"type"`
+	Index int     `json:"index"`
+	Value float32 `json:"value"`
+}
 
 // NewSerialIO creates a SerialIO instance that uses the provided deej
 // instance's connection info to establish communications with the arduino chip
@@ -49,12 +61,15 @@ func NewSerialIO(deej *Deej, logger *zap.SugaredLogger) (*SerialIO, error) {
 	logger = logger.Named("serial")
 
 	sio := &SerialIO{
-		deej:                deej,
-		logger:              logger,
-		stopChannel:         make(chan bool),
-		connected:           false,
-		conn:                nil,
-		sliderMoveConsumers: []chan SliderMoveEvent{},
+		deej:                          deej,
+		logger:                        logger,
+		stopChannel:                   make(chan bool),
+		connected:                     false,
+		conn:                          nil,
+		currentSliderPercentValues:    make(map[int]float32),
+		currentButtonValues:           make(map[int]bool),
+		sliderMoveConsumers:           []chan SliderMoveEvent{},
+		toggleMuteStateEventConsumers: []chan ToggleMuteStateEvent{},
 	}
 
 	logger.Debug("Created serial i/o instance")
@@ -140,10 +155,17 @@ func (sio *SerialIO) Stop() {
 // SubscribeToSliderMoveEvents returns an unbuffered channel that receives
 // a sliderMoveEvent struct every time a slider moves
 func (sio *SerialIO) SubscribeToSliderMoveEvents() chan SliderMoveEvent {
-	ch := make(chan SliderMoveEvent)
-	sio.sliderMoveConsumers = append(sio.sliderMoveConsumers, ch)
+	sliderMoveEventChannel := make(chan SliderMoveEvent)
+	sio.sliderMoveConsumers = append(sio.sliderMoveConsumers, sliderMoveEventChannel)
+	return sliderMoveEventChannel
+}
 
-	return ch
+// SubscribeToToggleMuteStateEvents returns an unbuffered channel that receives
+// a toggleMuteStateEvent struct every time a mute button is pressed
+func (sio *SerialIO) SubscribeToToggleMuteStateEvents() chan ToggleMuteStateEvent {
+	toggleMuteStateEventChannel := make(chan ToggleMuteStateEvent)
+	sio.toggleMuteStateEventConsumers = append(sio.toggleMuteStateEventConsumers, toggleMuteStateEventChannel)
+	return toggleMuteStateEventChannel
 }
 
 func (sio *SerialIO) setupOnConfigReload() {
@@ -164,6 +186,7 @@ func (sio *SerialIO) setupOnConfigReload() {
 				go func() {
 					<-time.After(stopDelay)
 					sio.lastKnownNumSliders = 0
+					sio.lastKnownNumButtons = 0
 				}()
 
 				// if connection params have changed, attempt to stop and start the connection
@@ -227,71 +250,63 @@ func (sio *SerialIO) readLine(logger *zap.SugaredLogger, reader *bufio.Reader) c
 }
 
 func (sio *SerialIO) handleLine(logger *zap.SugaredLogger, line string) {
+	var sensorsData []SensorData
 
-	// this function receives an unsanitized line which is guaranteed to end with LF,
-	// but most lines will end with CRLF. it may also have garbage instead of
-	// deej-formatted values, so we must check for that! just ignore bad ones
-	if !expectedLinePattern.MatchString(line) {
+	if err := json.Unmarshal([]byte(line), &sensorsData); err != nil {
+		sio.logger.Debugw("Got malformed line from serial, ignoring", "line", line, "err", err)
 		return
 	}
 
-	// trim the suffix
-	line = strings.TrimSuffix(line, "\r\n")
-
-	// split on pipe (|), this gives a slice of numerical strings between "0" and "1023"
-	splitLine := strings.Split(line, "|")
-	numSliders := len(splitLine)
-
-	// update our slider count, if needed - this will send slider move events for all
-	if numSliders != sio.lastKnownNumSliders {
-		logger.Infow("Detected sliders", "amount", numSliders)
-		sio.lastKnownNumSliders = numSliders
-		sio.currentSliderPercentValues = make([]float32, numSliders)
-
-		// reset everything to be an impossible value to force the slider move event later
-		for idx := range sio.currentSliderPercentValues {
-			sio.currentSliderPercentValues[idx] = -1.0
-		}
-	}
-
 	// for each slider:
-	moveEvents := []SliderMoveEvent{}
-	for sliderIdx, stringValue := range splitLine {
+	var moveEvents []SliderMoveEvent
+	var toggleMuteEvents []ToggleMuteStateEvent
 
-		// convert string values to integers ("1023" -> 1023)
-		number, _ := strconv.Atoi(stringValue)
+	for _, sensorData := range sensorsData {
+		switch sensorData.Type {
+		case "slider":
+			// turns out the first line could come out dirty sometimes (i.e. "4558|925|41|643|220")
+			// so let's check the first number for correctness just in case
+			if sensorData.Index == 0 && sensorData.Value > 1023 {
+				sio.logger.Debugw("Got malformed line from serial, ignoring", "line", line)
+				return
+			}
 
-		// turns out the first line could come out dirty sometimes (i.e. "4558|925|41|643|220")
-		// so let's check the first number for correctness just in case
-		if sliderIdx == 0 && number > 1023 {
-			sio.logger.Debugw("Got malformed line from serial, ignoring", "line", line)
-			return
-		}
+			// map the value from raw to a "dirty" float between 0 and 1 (e.g. 0.15451...)
+			dirtyFloat := sensorData.Value / 1023.0
 
-		// map the value from raw to a "dirty" float between 0 and 1 (e.g. 0.15451...)
-		dirtyFloat := float32(number) / 1023.0
+			// normalize it to an actual volume scalar between 0.0 and 1.0 with 2 points of precision
+			normalizedScalar := util.NormalizeScalar(dirtyFloat)
 
-		// normalize it to an actual volume scalar between 0.0 and 1.0 with 2 points of precision
-		normalizedScalar := util.NormalizeScalar(dirtyFloat)
+			// if sliders are inverted, take the complement of 1.0
+			if sio.deej.config.InvertSliders {
+				normalizedScalar = 1 - normalizedScalar
+			}
 
-		// if sliders are inverted, take the complement of 1.0
-		if sio.deej.config.InvertSliders {
-			normalizedScalar = 1 - normalizedScalar
-		}
+			// check if it changes the desired state (could just be a jumpy raw slider value)
+			if util.SignificantlyDifferent(sio.currentSliderPercentValues[sensorData.Index], normalizedScalar, sio.deej.config.NoiseReductionLevel) {
+				// if it does, update the saved value and create a move event
+				sio.currentSliderPercentValues[sensorData.Index] = normalizedScalar
 
-		// check if it changes the desired state (could just be a jumpy raw slider value)
-		if util.SignificantlyDifferent(sio.currentSliderPercentValues[sliderIdx], normalizedScalar, sio.deej.config.NoiseReductionLevel) {
+				moveEvents = append(moveEvents, SliderMoveEvent{
+					SliderID:     sensorData.Index,
+					PercentValue: normalizedScalar,
+				})
 
-			// if it does, update the saved value and create a move event
-			sio.currentSliderPercentValues[sliderIdx] = normalizedScalar
+				if sio.deej.Verbose() {
+					logger.Debugw("Slider moved", "event", sensorData)
+				}
+			}
+		case "button":
+			if sio.currentButtonValues[sensorData.Index] != (sensorData.Value == 1) {
+				sio.currentButtonValues[sensorData.Index] = sensorData.Value == 1
+				toggleMuteEvents = append(toggleMuteEvents, ToggleMuteStateEvent{
+					ButtonId: sensorData.Index,
+					State:    sensorData.Value == 1,
+				})
 
-			moveEvents = append(moveEvents, SliderMoveEvent{
-				SliderID:     sliderIdx,
-				PercentValue: normalizedScalar,
-			})
-
-			if sio.deej.Verbose() {
-				logger.Debugw("Slider moved", "event", moveEvents[len(moveEvents)-1])
+				if sio.deej.Verbose() {
+					logger.Debugw("Button pressed", "event", sensorData)
+				}
 			}
 		}
 	}
@@ -301,6 +316,14 @@ func (sio *SerialIO) handleLine(logger *zap.SugaredLogger, line string) {
 		for _, consumer := range sio.sliderMoveConsumers {
 			for _, moveEvent := range moveEvents {
 				consumer <- moveEvent
+			}
+		}
+	}
+
+	if len(toggleMuteEvents) > 0 {
+		for _, consumer := range sio.toggleMuteStateEventConsumers {
+			for _, muteEvent := range toggleMuteEvents {
+				consumer <- muteEvent
 			}
 		}
 	}
