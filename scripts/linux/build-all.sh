@@ -2,5 +2,5 @@
 
 echo 'Building deej (all)...'
 
-./build-dev.sh
-./build-release.sh
+./scripts/linux/build-dev.sh
+./scripts/linux/build-release.sh
