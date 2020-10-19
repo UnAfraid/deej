@@ -234,7 +234,7 @@ func (s *masterSession) GetMute() bool {
 
 		if err := s.client.Request(&request, &reply); err != nil {
 			s.logger.Warnw("Failed to get session volume", "error", err)
-			return 0
+			return false
 		}
 
 		muteState = reply.Mute
@@ -246,7 +246,7 @@ func (s *masterSession) GetMute() bool {
 
 		if err := s.client.Request(&request, &reply); err != nil {
 			s.logger.Warnw("Failed to get session volume", "error", err)
-			return 0
+			return false
 		}
 
 		muteState = reply.Mute
@@ -257,8 +257,6 @@ func (s *masterSession) GetMute() bool {
 
 func (s *masterSession) SetMute(v bool) error {
 	var request proto.RequestArgs
-
-	volumes := createChannelVolumes(s.streamChannels, v)
 
 	if s.isOutput {
 		request = &proto.SetSinkMute{
