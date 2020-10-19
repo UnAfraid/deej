@@ -3,6 +3,8 @@ module github.com/UnAfraid/deej
 go 1.14
 
 require (
+	github.com/akavel/rsrc v0.9.0
+	github.com/cratonica/2goarray v0.0.0-20190331194516-514510793eaa
 	github.com/fsnotify/fsnotify v1.4.9
 	github.com/gen2brain/beeep v0.0.0-20200526185328-e9c15c258e28
 	github.com/getlantern/golog v0.0.0-20200929154820-62107891371a // indirect

@@ -9,7 +9,7 @@ GOTO DONE
 
 :INSTALL
 ECHO Installing rsrc...
-go get  github.com/akavel/rsrc
+go get github.com/akavel/rsrc
 IF ERRORLEVEL 1 GOTO GETFAIL
 GOTO POSTINSTALL
 
