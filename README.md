@@ -65,7 +65,7 @@ deej is written in Go and [distributed](https://github.com/UnAfraid/deej/release
 
 ### Software
 
-- The code running on the Arduino board is a [C program](./arduino/deej-5-sliders-vanilla/deej-5-sliders-vanilla.ino) constantly writing current slider values over its serial interface
+- The code running on the Arduino board is a [C program](arduino/deej-5-sliders-vanilla/deej-5-sliders-buttons-vanilla.ino) constantly writing current slider values over its serial interface
 - The PC runs a lightweight Go client [`cmd/main.go`](./cmd/main.go) in the background. This client reads the serial stream and adjusts app volumes according to the given configuration file
 
 ## Slider mapping (configuration)
@@ -146,7 +146,7 @@ With many different 3D-printed designs being added to our [community showcase](.
 
 - Connect everything according to the [schematic](#schematic)
 - Test with a multimeter to be sure your sliders are hooked up correctly
-- Flash the Arduino chip with the sketch in [`arduino\deej-5-sliders-vanilla`](./arduino/deej-5-sliders-vanilla/deej-5-sliders-vanilla.ino)
+- Flash the Arduino chip with the sketch in [`arduino\deej-5-sliders-vanilla`](arduino/deej-5-sliders-vanilla/deej-5-sliders-buttons-vanilla.ino)
   - _Important:_ If you have more or less than 5 sliders, you must edit the sketch to match what you have
 - After flashing, check the serial monitor. You should see a constant stream of values separated by a pipe (`|`) character, e.g. `0|240|1023|0|483`
   - When you move a slider, its corresponding value should move between 0 and 1023
