@@ -7,9 +7,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/omriharel/deej/util"
 	"github.com/thoas/go-funk"
 	"go.uber.org/zap"
+
+	"github.com/UnAfraid/deej/util"
 )
 
 type sessionMap struct {

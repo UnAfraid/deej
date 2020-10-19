@@ -5,9 +5,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/omriharel/deej/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/UnAfraid/deej/util"
 )
 
 const (

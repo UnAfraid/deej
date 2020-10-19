@@ -3,8 +3,8 @@ package deej
 import (
 	"github.com/getlantern/systray"
 
-	"github.com/omriharel/deej/icon"
-	"github.com/omriharel/deej/util"
+	"github.com/UnAfraid/deej/icon"
+	"github.com/UnAfraid/deej/util"
 )
 
 func (d *Deej) initializeTray(onDone func()) {
