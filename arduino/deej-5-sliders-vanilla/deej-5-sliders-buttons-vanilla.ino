@@ -92,7 +92,7 @@ void updateButtonValues()
 void sendButtonValues()
 {
   bool needsUpdate = (millis() - lastWrittenButtons) > updateRepeatDelay;
-  String objects[NUM_SLIDERS];
+  String objects[NUM_BUTTONS];
   int objectLen = 0;
   for (int i = 0; i < NUM_BUTTONS; i++)
   {
@@ -110,11 +110,6 @@ void sendButtonValues()
     }
   }
 
-  if (needsUpdate)
-  {
-    lastWrittenButtons = millis();
-  }
-
   if (objectLen != 0)
   {
     String builtString = String("[");
@@ -128,6 +123,7 @@ void sendButtonValues()
     }
     builtString += String("]");
     Serial.println(builtString);
+    lastWrittenButtons = millis();
   }
 }
 
@@ -152,11 +148,6 @@ void sendSliderValues()
     }
   }
 
-  if (needsUpdate)
-  {
-    lastWrittenSliders = millis();
-  }
-
   if (objectLen != 0)
   {
     String builtString = String("[");
@@ -170,5 +161,6 @@ void sendSliderValues()
     }
     builtString += String("]");
     Serial.println(builtString);
+    lastWrittenSliders = millis();
   }
 }
